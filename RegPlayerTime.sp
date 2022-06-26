@@ -2,8 +2,10 @@
 
 Database g_hDataBase;
 
-int g_id = 0;
-bool g_noErr = false;
+int 
+    g_id = 0;
+bool 
+    g_noErr = false;
 
 public Plugin MyInfo = { 
     name = "RegPlayerData", 
@@ -15,17 +17,44 @@ public Plugin MyInfo = {
 
 public void OnPluginStart()
 {
-    char czError[256];
+    char 
+        czError[256];
     g_hDataBase = SQL_Connect("RegPlayerTime", true, czError, sizeof(czError));
-    if(g_hDataBase==null || czError[0])
+    if(g_hDataBase == null || czError[0])
     {
         SetFailState("Failure connection to database: %s", czError);
         return;
     }
-    CreateDbTable();
+    char driver[8];
+    SQL_ReadDriver(g_hDataBase, driver, sizeof(driver));
+    bool MYSQL = StrEqual(driver, "mysql", false);
+    if(MYSQL)
+    {
+        CreateDbTableMYSQL();
+    }
+    else
+    {
+        CreateDbTableSQL();
+    }
 }
 
-public void CreateDbTable()
+public void CreateDbTableMYSQL()
+{
+    SQL_Query(g_hDataBase, "CREATE TABLE \
+                            IF NOT EXISTS Table_RegPlayerTime \
+                            (   \
+                                id           INT,\
+                                steam        TEXT  PRIMARY KEY,\
+                                name         TEXT,\
+                                ip           TEXT,\
+                                firstconnect_date TEXT,\
+                                firstconnect_time TEXT,\
+                                lastconnect_date  TEXT,\
+                                lastconnect_time  TEXT\
+                            );");
+}
+
+public void CreateDbTableSQL()
 {
     SQL_Query(g_hDataBase, "CREATE TABLE \
                             IF NOT EXISTS Table_RegPlayerTime \
@@ -48,13 +77,17 @@ public void OnClientPutInServer(client)
 
 bool CheckData(client)
 {
-    char Query[512], auth[20];
+    char 
+        Query[512], 
+        auth[20];
+
     GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
 
     Format(Query, sizeof(Query), "SELECT * FROM Table_RegPlayerTime");
     SQL_LockDatabase(g_hDataBase);
     DBResultSet dresults = SQL_Query(g_hDataBase, Query, sizeof(Query));
     SQL_UnlockDatabase(g_hDataBase);
+
     g_id = dresults.RowCount;
 
     Format(Query, sizeof(Query), "SELECT steam FROM Table_RegPlayerTime WHERE steam='%s';",  auth);
@@ -64,7 +97,7 @@ bool CheckData(client)
 
     g_noErr = false;
 
-    if(dresults!=INVALID_HANDLE)
+    if(dresults != INVALID_HANDLE)
     {
         dresults.FetchRow();
         if(dresults.RowCount>0)
