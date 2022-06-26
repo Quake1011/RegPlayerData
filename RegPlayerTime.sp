@@ -2,9 +2,8 @@
 
 Database g_hDataBase;
 
-DBResultSet dbResult;
-
-bool g_bIsClientInDb;
+int g_id = 0;
+bool g_noErr = false;
 
 public Plugin MyInfo = { 
     name = "RegPlayerData", 
@@ -23,13 +22,23 @@ public void OnPluginStart()
         SetFailState("Failure connection to database: %s", czError);
         return;
     }
-    SQL_Query(g_hDataBase, "CREATE TABLE IF NOT EXISTS Table_RegPlayerTime (  id int(11) NOT NULL AUTO_INCREMENT, \
-                                                                        steam varchar(20) NOT NULL, \
-                                                                        name varchar(128) NOT NULL, \
-                                                                        ip varchar(32) NOT NULL, \
-                                                                        firstconnect varchar(16) NOT NULL, \
-                                                                        lastconnect varchar(16) NOT NULL, \
-                                                                        PRIMARY_KEY (steam))");
+    CreateDbTable();
+}
+
+public void CreateDbTable()
+{
+    SQL_Query(g_hDataBase, "CREATE TABLE \
+                            IF NOT EXISTS Table_RegPlayerTime \
+                            (   \
+                                id           INTEGER (12)  NOT NULL,\
+                                steam        VARCHAR (20)  PRIMARY KEY NOT NULL,\
+                                name         VARCHAR (128) NOT NULL,\
+                                ip           VARCHAR (32)  NOT NULL,\
+                                firstconnect_date VARCHAR (16)  NOT NULL,\
+                                firstconnect_time VARCHAR (16)  NOT NULL,\
+                                lastconnect_date  VARCHAR (16)  NOT NULL,\
+                                lastconnect_time  VARCHAR (16)  NOT NULL\
+                            );");
 }
 
 public void OnClientPutInServer(client)
@@ -37,71 +46,83 @@ public void OnClientPutInServer(client)
     GetData(client);
 }
 
+bool CheckData(client)
+{
+    char Query[512], auth[20];
+    GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
+
+    Format(Query, sizeof(Query), "SELECT * FROM Table_RegPlayerTime");
+    SQL_LockDatabase(g_hDataBase);
+    DBResultSet dresults = SQL_Query(g_hDataBase, Query, sizeof(Query));
+    SQL_UnlockDatabase(g_hDataBase);
+    g_id = dresults.RowCount;
+
+    Format(Query, sizeof(Query), "SELECT steam FROM Table_RegPlayerTime WHERE steam='%s';",  auth);
+    SQL_LockDatabase(g_hDataBase);
+    dresults = SQL_Query(g_hDataBase, Query, sizeof(Query));
+    SQL_UnlockDatabase(g_hDataBase);
+
+    g_noErr = false;
+
+    if(dresults!=INVALID_HANDLE)
+    {
+        dresults.FetchRow();
+        if(dresults.RowCount>0)
+        {    
+            PrintToServer("The same STEAMID not found");
+            delete dresults;
+            return true;
+        }
+        else return false;
+    }
+    else
+    {
+        SetFailState("Error while checking existing STEAMID");
+        g_noErr = true;
+        delete dresults;
+        return false;
+    }
+}
+
 void GetData(client)
 {
-    char name[MAX_NAME_LENGTH], ip[16], time[16];
-    if(!IsFakeClient(client))
+    if(CheckData(client))
     {
-        GetClientName(client, name, sizeof(name));
-        GetClientIP(client, ip, sizeof(ip));
-        FormatTime(time, sizeof(time), "%x", GetTime())
-        if(!IsClientInDataBase) 
-        {   
-            char auth[20];
-            GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
-            SQL_Send_Data_Query(auth, name, ip, time, false);
-        }
-        else  SQL_Send_Data_Query(_, name, ip, time, true);
+        CreateClientDataInDB(client);
+    }
+    else if(!CheckData(client) && g_noErr)
+    {
+        UpdateClientDataInDB(client);
     }
 }
 
-void SQL_Send_Data_Query(char[] auth = "", char[] name, char[] ip, char[] time, bool newdata)
+public void CreateClientDataInDB(client)
 {
-    char Query[512];
-    if(newdata)
-    {        
-        FormatEx(Query, sizeof(Query), "INSERT INTO Table_RegPlayerTime (steam, name, ip, firstconnect) VALUE (%s, %s, %s, %s)",auth, name, ip, time)
-        SQL_TQuery(g_hDataBase, SQLSendND_Q_CB, Query);
-    }
-    else
-    {
-        FormatEx(Query, sizeof(Query), "UPDATE Table_RegPlayerTime SET %s=%", name, ip, time)
-        SQL_TQuery(g_hDataBase, SQLSendND_Q_CB, Query);
-    }
+    char 
+        czClientData[5][MAX_NAME_LENGTH],
+        Query[512];
+
+    GetClientAuthId(client, AuthId_Steam2, czClientData[0], 20);
+    GetClientName(client, czClientData[1], MAX_NAME_LENGTH);
+    GetClientIP(client, czClientData[2], 16);
+    FormatTime(czClientData[3], 16, "%x", GetTime());
+    FormatTime(czClientData[4], 16, "%X", GetTime());
+
+    FormatEx(Query, sizeof(Query), "INSERT INTO Table_RegPlayerTime (id, steam, name, ip, firstconnect_date, firstconnect_time, lastconnect_date, lastconnect_time) VALUES ('%i', '%s', '%s', '%s', '%s', '%s','%s', '%s')", g_id, czClientData[0], czClientData[1], czClientData[2], czClientData[3], czClientData[4], czClientData[3], czClientData[4]);
+    SQL_Query(g_hDataBase, Query);
 }
 
-public void SQLSendND_Q_CB(Handle owner, Handle hndl, const char[] error, any data)
+public void UpdateClientDataInDB(client)
 {
-    if(error[0])
-    {
-        SetFailState("Error SQLSendND_Q_CB: %s", error);
-        return;
-    }
-    else
-    {
-        PrintToServer("Successfully sends!");
-    }
-}
+    char    
+        czClientData[4][MAX_NAME_LENGTH],
+        Query[512];
 
-public void SQLQueryResult(Database db, DBResultSet results, const char[] error, any data)
-{
-    results = dbResult;
-    if(dbResult.HasResults())
-    {
-        PrintToServer("Success!");
-        g_bIsClientInDb = true;
-    }
-    else
-    {
-        SetFailState("Error SQLQueryResult: %s", error);
-        return;
-    }
-}
+    GetClientName(client, czClientData[0], MAX_NAME_LENGTH);
+    GetClientIP(client, czClientData[1], 16);
+    FormatTime(czClientData[2], 16, "%x", GetTime());
+    FormatTime(czClientData[3], 16, "%X", GetTime());
 
-bool IsClientInDataBase(char[] buffer)
-{
-    char Query[512];
-    FormatEx(Query, sizeof(Query), "SELECT steam FROM RegPlayerTime WHERE steam=%s", buffer)
-    g_hDataBase.Query(SQLSendND_Q_CB, Query);
-    return g_bIsClientInDb;
+    FormatEx(Query, sizeof(Query), "UPDATE Table_RegPlayerTime SET name='%s', ip='%s', lastconnect_date='%s', lastconnect_time='%s'", czClientData[0], czClientData[1], czClientData[2], czClientData[3]);
+    SQL_Query(g_hDataBase, Query);
 }
